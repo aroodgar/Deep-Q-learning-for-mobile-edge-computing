@@ -17,7 +17,7 @@ I needed the results as part of my work on DRL-based solutions for task offloadi
 I hope this code helps someone who also needs simulation codes for regenerating results in the aforementioned paper.
 If you see any problem in my code, I'd be happy to be notified about it.
 
-**Note: The first part of this README file belongs to the main project which is the link was mentioned earlier.**
+**Note: The first part of this README file belongs to the main project which the link was mentioned earlier.**
 
 ## Extra abstraction for queueing algorithms
 I have added some abstraction for queueing algorithms which were necessary in order to test some things for my own work.
