@@ -2,12 +2,14 @@ import numpy as np
 import random
 import math
 import queue
+from QueueHandler import QueueHandler
 
 class Offload:
 
-    def __init__(self, num_iot, num_fog, num_time, max_delay):
+    def __init__(self, utils, num_iot, num_fog, num_time, max_delay, trans_queue_type, task_arrive_prob):
 
         # INPUT DATA
+        self.utils = utils
         self.n_iot = num_iot
         self.n_fog = num_fog
         self.n_time = num_time
@@ -17,6 +19,9 @@ class Offload:
         self.drop_trans_count = 0
         self.drop_fog_count = 0
         self.drop_iot_count = 0
+        self.episode_task_count = 0
+
+        self.trans_queue_type = trans_queue_type
 
         # CONSIDER A SCENARIO RANDOM IS NOT GOOD
         # LOCAL CAP SHOULD NOT BE TOO SMALL, OTHERWISE, THE STATE MATRIX IS TOO LARGE (EXCEED THE MAXIMUM)
@@ -28,11 +33,14 @@ class Offload:
         self.max_delay = max_delay # time slots
 
         # BITARRIVE_SET (MARKOVIAN)
-        self.task_arrive_prob = 0.3
-        self.max_bit_arrive = 5 # Mbits
-        self.min_bit_arrive = 2 # Mbits
+        self.task_arrive_prob = task_arrive_prob
+        self.max_bit_arrive = 5 # default = 5 Mbits
+        self.min_bit_arrive = 2 # default = 2 Mbits
         self.bitArrive_set = np.arange(self.min_bit_arrive, self.max_bit_arrive, 0.1)
         self.bitArrive = np.zeros([self.n_time, self.n_iot])
+        self.bitArrive_p = np.zeros([self.n_time, self.n_iot])
+
+        print(f"Init task_arrive_prob = {self.task_arrive_prob}")
 
         # ACTION: 0, local; 1, fog 0; 2, fog 1; ...; n, fog n - 1
         self.n_actions = 1 + num_fog
@@ -51,7 +59,7 @@ class Offload:
 
         for iot in range(self.n_iot):
             self.Queue_iot_comp.append(queue.Queue())
-            self.Queue_iot_tran.append(queue.Queue())
+            self.Queue_iot_tran.append(QueueHandler(self.trans_queue_type))
             self.Queue_fog_comp.append(list())
             for fog in range(self.n_fog):
                 self.Queue_fog_comp[iot].append(queue.Queue())
@@ -71,7 +79,7 @@ class Offload:
         for iot in range(self.n_iot):
             self.task_on_process_local.append({'size': np.nan, 'time': np.nan, 'remain': np.nan})
             self.task_on_transmit_local.append({'size': np.nan, 'time': np.nan,
-                                                'fog': np.nan, 'remain': np.nan})
+                                                'fog': np.nan, 'remain': np.nan, 'priority': np.nan})
             self.task_on_process_fog.append(list())
             for fog in range(self.n_fog):
                 self.task_on_process_fog[iot].append({'size': np.nan, 'time': np.nan, 'remain': np.nan})
@@ -84,15 +92,17 @@ class Offload:
         self.fog_drop = np.zeros([self.n_iot, self.n_fog])
 
     # reset the network scenario
-    def reset(self, bitArrive):
+    def reset(self, bitArrive, bitArrive_p):
 
         # test
         self.drop_trans_count = 0
         self.drop_fog_count = 0
         self.drop_iot_count = 0
+        self.episode_task_count = 0
 
         # BITRATE
         self.bitArrive = bitArrive
+        self.bitArrive_p = bitArrive_p
 
         # TIME COUNT
         self.time_count = int(0)
@@ -104,7 +114,7 @@ class Offload:
 
         for iot in range(self.n_iot):
             self.Queue_iot_comp.append(queue.Queue())
-            self.Queue_iot_tran.append(queue.Queue())
+            self.Queue_iot_tran.append(QueueHandler(self.trans_queue_type))
             self.Queue_fog_comp.append(list())
             for fog in range(self.n_fog):
                 self.Queue_fog_comp[iot].append(queue.Queue())
@@ -122,7 +132,7 @@ class Offload:
         for iot in range(self.n_iot):
             self.task_on_process_local.append({'size': np.nan, 'time': np.nan, 'remain': np.nan})
             self.task_on_transmit_local.append({'size': np.nan, 'time': np.nan,
-                                                'fog': np.nan, 'remain': np.nan})
+                                                'fog': np.nan, 'remain': np.nan, 'priority': np.nan})
             self.task_on_process_fog.append(list())
             for fog in range(self.n_fog):
                 self.task_on_process_fog[iot].append({'size': np.nan, 'time': np.nan, 'remain': np.nan})
@@ -151,7 +161,6 @@ class Offload:
 
     # perform action, observe state and delay (several steps later)
     def step(self, action):
-
         # EXTRACT ACTION FOR EACH IOT
         iot_action_local = np.zeros([self.n_iot], np.int32)
         iot_action_fog = np.zeros([self.n_iot], np.int32)
@@ -172,6 +181,10 @@ class Offload:
             if iot_action_local[iot_index] == 1:
                 tmp_dict = {'size': iot_bitarrive, 'time': self.time_count}
                 self.Queue_iot_comp[iot_index].put(tmp_dict)
+                if tmp_dict['size'] != 0:
+                  self.utils.add_task()
+                  self.utils.add_comp_task()
+                  self.episode_task_count += 1
 
             # TASK ON PROCESS
             if math.isnan(self.task_on_process_local[iot_index]['remain']) \
@@ -200,12 +213,17 @@ class Offload:
                     self.process_delay[self.task_on_process_local[iot_index]['time'], iot_index] \
                         = self.time_count - self.task_on_process_local[iot_index]['time'] + 1
                     self.task_on_process_local[iot_index]['remain'] = np.nan
+                    self.utils.done_comp_task(
+                      self.process_delay[self.task_on_process_local[iot_index]['time'], iot_index]
+                      )
                 elif self.time_count - self.task_on_process_local[iot_index]['time'] + 1 == self.max_delay:
                     self.process_delay[self.task_on_process_local[iot_index]['time'], iot_index] = self.max_delay
                     self.process_delay_unfinish_ind[self.task_on_process_local[iot_index]['time'], iot_index] = 1
                     self.task_on_process_local[iot_index]['remain'] = np.nan
 
                     self.drop_iot_count = self.drop_iot_count + 1
+                    self.utils.drop_comp_task()
+                    self.utils.drop_task()
 
             # OTHER INFO self.t_iot_comp[iot_index]
             # update self.t_iot_comp[iot_index] only when iot_bitrate != 0
@@ -251,6 +269,9 @@ class Offload:
                         self.process_delay[self.task_on_process_fog[iot_index][fog_index]['time'],iot_index] \
                             = self.time_count - self.task_on_process_fog[iot_index][fog_index]['time'] + 1
                         self.task_on_process_fog[iot_index][fog_index]['remain'] = np.nan
+                        self.utils.done_fog_task(
+                          self.process_delay[self.task_on_process_fog[iot_index][fog_index]['time'],iot_index]
+                          )
                     elif self.time_count - self.task_on_process_fog[iot_index][fog_index]['time'] + 1 == self.max_delay:
                         self.process_delay[self.task_on_process_fog[iot_index][fog_index]['time'], iot_index] = \
                             self.max_delay
@@ -260,6 +281,8 @@ class Offload:
                         self.task_on_process_fog[iot_index][fog_index]['remain'] = np.nan
 
                         self.drop_fog_count = self.drop_fog_count + 1
+                        self.utils.drop_fog_task()
+                        self.utils.drop_task()
 
                 # OTHER INFO
                 if self.fog_iot_m[fog_index] != 0:
@@ -277,19 +300,25 @@ class Offload:
             # INPUT
             if iot_action_local[iot_index] == 0:
                 tmp_dict = {'size': self.bitArrive[self.time_count, iot_index], 'time': self.time_count,
-                            'fog': iot_action_fog[iot_index]}
+                            'fog': iot_action_fog[iot_index], 
+                            'priority': self.bitArrive_p[self.time_count, iot_index]}
                 self.Queue_iot_tran[iot_index].put(tmp_dict)
+                if tmp_dict['size'] != 0:
+                  self.utils.add_trans_task(tmp_dict['priority'])
+                  self.utils.add_task()
+                  self.episode_task_count += 1
 
             # TASK ON PROCESS
             if math.isnan(self.task_on_transmit_local[iot_index]['remain']) \
-                    and (not self.Queue_iot_tran[iot_index].empty()):
-                while not self.Queue_iot_tran[iot_index].empty():
+                    and (not self.Queue_iot_tran[iot_index].isEmpty()):
+                while not self.Queue_iot_tran[iot_index].isEmpty():
                     get_task = self.Queue_iot_tran[iot_index].get()
                     if get_task['size'] != 0:
                         if self.time_count - get_task['time'] + 1 <= self.max_delay:
                             self.task_on_transmit_local[iot_index]['size'] = get_task['size']
                             self.task_on_transmit_local[iot_index]['time'] = get_task['time']
                             self.task_on_transmit_local[iot_index]['fog'] = int(get_task['fog'])
+                            self.task_on_transmit_local[iot_index]['priority'] = get_task['priority']
                             self.task_on_transmit_local[iot_index]['remain'] = \
                                 self.task_on_transmit_local[iot_index]['size']
                             break
@@ -308,6 +337,7 @@ class Offload:
                     tmp_dict = {'size': self.task_on_transmit_local[iot_index]['size'],
                                 'time': self.task_on_transmit_local[iot_index]['time']}
                     self.Queue_fog_comp[iot_index][self.task_on_transmit_local[iot_index]['fog']].put(tmp_dict)
+                    self.utils.add_fog_task()
 
                     # OTHER INFO
                     fog_index = self.task_on_transmit_local[iot_index]['fog']
@@ -325,6 +355,8 @@ class Offload:
                     self.task_on_transmit_local[iot_index]['remain'] = np.nan
 
                     self.drop_trans_count = self.drop_trans_count + 1
+                    self.utils.drop_trans_task(self.task_on_transmit_local[iot_index]['priority'])
+                    self.utils.drop_task()
 
             # OTHER INFO
             if iot_bitarrive != 0:

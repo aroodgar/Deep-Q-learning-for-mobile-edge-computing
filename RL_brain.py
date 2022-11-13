@@ -1,27 +1,31 @@
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+
 # import matplotlib.pyplot as plt
 from collections import deque
+
+tf.disable_v2_behavior()
+
 
 class DeepQNetwork:
 
     def __init__(self,
-                 n_actions,                  # the number of actions
+                 n_actions,  # the number of actions
                  n_features,
                  n_lstm_features,
                  n_time,
-                 learning_rate = 0.01,
-                 reward_decay = 0.9,
-                 e_greedy = 0.99,
-                 replace_target_iter = 200,  # each 200 steps, update target net
-                 memory_size = 500,  # maximum of memory
+                 learning_rate=0.01,
+                 reward_decay=0.9,
+                 e_greedy=0.99,
+                 replace_target_iter=200,  # each 200 steps, update target net
+                 memory_size=500,  # maximum of memory
                  batch_size=32,
-                 e_greedy_increment= 0.00025,
-                 n_lstm_step = 10,
-                 dueling = True,
-                 double_q = True,
-                 N_L1 = 20,
-                 N_lstm = 20):
+                 e_greedy_increment=0.00025,
+                 n_lstm_step=10,
+                 dueling=True,
+                 double_q=True,
+                 N_L1=20,
+                 N_lstm=20):
 
         self.n_actions = n_actions
         self.n_features = n_features
@@ -31,22 +35,22 @@ class DeepQNetwork:
         self.epsilon_max = e_greedy
         self.replace_target_iter = replace_target_iter
         self.memory_size = memory_size
-        self.batch_size = batch_size    # select self.batch_size number of time sequence for learning
+        self.batch_size = batch_size  # select self.batch_size number of time sequence for learning
         self.epsilon_increment = e_greedy_increment
         self.epsilon = 0 if e_greedy_increment is not None else self.epsilon_max
         self.dueling = dueling
         self.double_q = double_q
         self.learn_step_counter = 0
         self.N_L1 = N_L1
-
+        print("lr =", self.lr, "bs =", self.batch_size)
         # lstm
         self.N_lstm = N_lstm
-        self.n_lstm_step = n_lstm_step       # step_size in lstm
+        self.n_lstm_step = n_lstm_step  # step_size in lstm
         self.n_lstm_state = n_lstm_features  # [fog1, fog2, ...., fogn, M_n(t)]
 
         # initialize zero memory np.hstack((s, [a, r], s_, lstm_s, lstm_s_))
         self.memory = np.zeros((self.memory_size, self.n_features + 1 + 1
-                                    + self.n_features + self.n_lstm_state + self.n_lstm_state))
+                                + self.n_features + self.n_lstm_state + self.n_lstm_state))
 
         # consist of [target_net, evaluate_net]
         self._build_net()
@@ -55,7 +59,7 @@ class DeepQNetwork:
         t_params = tf.get_collection('target_net_params')  # obtain the parameters in target_net
         e_params = tf.get_collection('eval_net_params')  # obtain the parameters in eval_net
         self.replace_target_op = [tf.assign(t, e) for t, e in
-                                      zip(t_params, e_params)]  # update the parameters in target_net
+                                  zip(t_params, e_params)]  # update the parameters in target_net
 
         self.sess = tf.Session()
 
@@ -72,28 +76,28 @@ class DeepQNetwork:
 
     def _build_net(self):
 
-        tf.reset_default_graph()
+        tf.compat.v1.reset_default_graph()
 
-        def build_layers(s,lstm_s,c_names, n_l1, n_lstm, w_initializer, b_initializer):
+        def build_layers(s, lstm_s, c_names, n_l1, n_lstm, w_initializer, b_initializer):
 
             # lstm for load levels
             with tf.variable_scope('l0'):
-                lstm_dnn = tf.contrib.rnn.BasicLSTMCell(n_lstm)
+                lstm_dnn = tf.nn.rnn_cell.GRUCell(n_lstm)
                 lstm_dnn.zero_state(self.batch_size, tf.float32)
-                lstm_output,lstm_state = tf.nn.dynamic_rnn(lstm_dnn, lstm_s, dtype=tf.float32)
+                lstm_output, lstm_state = tf.nn.dynamic_rnn(lstm_dnn, lstm_s, dtype=tf.float32)
                 lstm_output_reduced = tf.reshape(lstm_output[:, -1, :], shape=[-1, n_lstm])
 
             # first layer
             with tf.variable_scope('l1'):
-                w1 = tf.get_variable('w1',[n_lstm + self.n_features, n_l1], initializer=w_initializer,
+                w1 = tf.get_variable('w1', [n_lstm + self.n_features, n_l1], initializer=w_initializer,
                                      collections=c_names)
-                b1 = tf.get_variable('b1',[1,n_l1],initializer=b_initializer, collections=c_names)
-                l1 = tf.nn.relu(tf.matmul(tf.concat([lstm_output_reduced, s],1), w1) + b1)
+                b1 = tf.get_variable('b1', [1, n_l1], initializer=b_initializer, collections=c_names)
+                l1 = tf.nn.relu(tf.matmul(tf.concat([lstm_output_reduced, s], 1), w1) + b1)
 
             # second layer
             with tf.variable_scope('l12'):
                 w12 = tf.get_variable('w12', [n_l1, n_l1], initializer=w_initializer,
-                                         collections=c_names)
+                                      collections=c_names)
                 b12 = tf.get_variable('b12', [1, n_l1], initializer=b_initializer, collections=c_names)
                 l12 = tf.nn.relu(tf.matmul(l1, w12) + b12)
 
@@ -102,17 +106,17 @@ class DeepQNetwork:
                 # Dueling DQN
                 # a single output n_l1 -> 1
                 with tf.variable_scope('Value'):
-                    w2 = tf.get_variable('w2',[n_l1,1],initializer=w_initializer,collections=c_names)
-                    b2 = tf.get_variable('b2',[1,1],initializer=b_initializer,collections=c_names)
-                    self.V = tf.matmul(l12,w2) + b2
+                    w2 = tf.get_variable('w2', [n_l1, 1], initializer=w_initializer, collections=c_names)
+                    b2 = tf.get_variable('b2', [1, 1], initializer=b_initializer, collections=c_names)
+                    self.V = tf.matmul(l12, w2) + b2
                 # n_l1 -> n_actions
                 with tf.variable_scope('Advantage'):
-                    w2 = tf.get_variable('w2',[n_l1,self.n_actions],initializer=w_initializer,collections=c_names)
-                    b2 = tf.get_variable('b2',[1,self.n_actions],initializer=b_initializer,collections=c_names)
-                    self.A = tf.matmul(l12,w2) + b2
+                    w2 = tf.get_variable('w2', [n_l1, self.n_actions], initializer=w_initializer, collections=c_names)
+                    b2 = tf.get_variable('b2', [1, self.n_actions], initializer=b_initializer, collections=c_names)
+                    self.A = tf.matmul(l12, w2) + b2
 
                 with tf.variable_scope('Q'):
-                    out = self.V + (self.A - tf.reduce_mean(self.A,axis=1,keep_dims=True))  # Q = V(s) +A(s,a)
+                    out = self.V + (self.A - tf.reduce_mean(self.A, axis=1, keep_dims=True))  # Q = V(s) +A(s,a)
 
             else:
                 with tf.variable_scope('Q'):
@@ -123,22 +127,22 @@ class DeepQNetwork:
             return out
 
         # input for eval_net
-        self.s = tf.placeholder(tf.float32,[None,self.n_features], name = 's')  # state (observation)
-        self.lstm_s = tf.placeholder(tf.float32,[None,self.n_lstm_step,self.n_lstm_state], name='lstm1_s')
+        self.s = tf.placeholder(tf.float32, [None, self.n_features], name='s')  # state (observation)
+        self.lstm_s = tf.placeholder(tf.float32, [None, self.n_lstm_step, self.n_lstm_state], name='lstm1_s')
 
-        self.q_target = tf.placeholder(tf.float32,[None,self.n_actions], name = 'Q_target') # q_target
+        self.q_target = tf.placeholder(tf.float32, [None, self.n_actions], name='Q_target')  # q_target
 
         # input for target_net
         self.s_ = tf.placeholder(tf.float32, [None, self.n_features], name='s_')
-        self.lstm_s_ = tf.placeholder(tf.float32,[None,self.n_lstm_step,self.n_lstm_state], name='lstm1_s_')
+        self.lstm_s_ = tf.placeholder(tf.float32, [None, self.n_lstm_step, self.n_lstm_state], name='lstm1_s_')
 
         # generate EVAL_NET, update parameters
         with tf.variable_scope('eval_net'):
 
             # c_names(collections_names), will be used when update target_net
             # tf.random_normal_initializer(mean=0.0, stddev=1.0, seed=None, dtype=tf.float32), return a initializer
-            c_names, n_l1, n_lstm, w_initializer, b_initializer =  \
-                ['eval_net_params', tf.GraphKeys.GLOBAL_VARIABLES], self.N_L1, self.N_lstm,\
+            c_names, n_l1, n_lstm, w_initializer, b_initializer = \
+                ['eval_net_params', tf.GraphKeys.GLOBAL_VARIABLES], self.N_L1, self.N_lstm, \
                 tf.random_normal_initializer(0., 0.3), tf.constant_initializer(0.1)  # config of layers
 
             # input (n_feature) -> l1 (n_l1) -> l2 (n_actions)
@@ -152,11 +156,11 @@ class DeepQNetwork:
 
         # loss and train
         with tf.variable_scope('loss'):
-            self.loss = tf.reduce_mean(tf.squared_difference(self.q_target,self.q_eval))
+            self.loss = tf.reduce_mean(tf.squared_difference(self.q_target, self.q_eval))
         with tf.variable_scope('train'):
             self._train_op = tf.train.RMSPropOptimizer(self.lr).minimize(self.loss)
 
-    def store_transition(self, s, lstm_s,  a, r, s_, lstm_s_):
+    def store_transition(self, s, lstm_s, a, r, s_, lstm_s_):
         # RL.store_transition(observation,action,reward,observation_)
         # hasattr(object, name), if object has name attribute
         if not hasattr(self, 'memory_counter'):
@@ -213,15 +217,14 @@ class DeepQNetwork:
         if self.memory_counter > self.memory_size:
             sample_index = np.random.choice(self.memory_size - self.n_lstm_step, size=self.batch_size)
         else:
-            sample_index = np.random.choice(self.memory_counter - self.n_lstm_step, size=self.batch_size)\
-
+            sample_index = np.random.choice(self.memory_counter - self.n_lstm_step, size=self.batch_size)
         #  transition = np.hstack(s, [a, r], s_, lstm_s, lstm_s_)
-        batch_memory = self.memory[sample_index, :self.n_features+1+1+self.n_features]
+        batch_memory = self.memory[sample_index, :self.n_features + 1 + 1 + self.n_features]
         lstm_batch_memory = np.zeros([self.batch_size, self.n_lstm_step, self.n_lstm_state * 2])
         for ii in range(len(sample_index)):
             for jj in range(self.n_lstm_step):
-                lstm_batch_memory[ii,jj,:] = self.memory[sample_index[ii]+jj,
-                                              self.n_features+1+1+self.n_features:]
+                lstm_batch_memory[ii, jj, :] = self.memory[sample_index[ii] + jj,
+                                               self.n_features + 1 + 1 + self.n_features:]
 
         # obtain q_next (from target_net) (to q_target) and q_eval (from eval_net)
         # minimize（target_q - q_eval）^2
@@ -234,14 +237,15 @@ class DeepQNetwork:
             feed_dict={
                 # [s, a, r, s_]
                 # input for target_q (last)
-                self.s_: batch_memory[:, -self.n_features:], self.lstm_s_: lstm_batch_memory[:,:,self.n_lstm_state:],
+                self.s_: batch_memory[:, -self.n_features:], self.lstm_s_: lstm_batch_memory[:, :, self.n_lstm_state:],
                 # input for eval_q (last)
-                self.s: batch_memory[:, -self.n_features:], self.lstm_s: lstm_batch_memory[:,:,self.n_lstm_state:],
+                self.s: batch_memory[:, -self.n_features:], self.lstm_s: lstm_batch_memory[:, :, self.n_lstm_state:],
             }
         )
         # q_eval, given the current state from batch, what will be the q_eval from q_eval
         q_eval = self.sess.run(self.q_eval, {self.s: batch_memory[:, :self.n_features],
-                                                 self.lstm_s: lstm_batch_memory[:,:,:self.n_lstm_state]})
+                                             self.lstm_s: lstm_batch_memory[:, :, :self.n_lstm_state]})
+
         q_target = q_eval.copy()
         batch_index = np.arange(self.batch_size, dtype=np.int32)
         eval_act_index = batch_memory[:, self.n_features].astype(int)  # action with a single value (int action)
@@ -273,7 +277,7 @@ class DeepQNetwork:
             self.reward_store.append(np.zeros([self.n_time]))
         self.reward_store[episode][time] = reward
 
-    def do_store_action(self,episode,time, action):
+    def do_store_action(self, episode, time, action):
         while episode >= len(self.action_store):
             self.action_store.append(- np.ones([self.n_time]))
         self.action_store[episode][time] = action
