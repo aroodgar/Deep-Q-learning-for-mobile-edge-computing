@@ -203,6 +203,9 @@ class Offload:
                         else:
                             self.process_delay[get_task['time'], iot_index] = self.max_delay
                             self.process_delay_unfinish_ind[get_task['time'], iot_index] = 1
+                            self.drop_iot_count = self.drop_iot_count + 1
+                            self.utils.drop_comp_task()
+                            self.utils.drop_task()
 
             # PROCESS
             if self.task_on_process_local[iot_index]['remain'] > 0:
@@ -257,6 +260,9 @@ class Offload:
                         else:
                             self.process_delay[get_task['time'], iot_index] = self.max_delay
                             self.process_delay_unfinish_ind[get_task['time'], iot_index] = 1
+                            self.drop_fog_count = self.drop_fog_count + 1
+                            self.utils.drop_fog_task()
+                            self.utils.drop_task()
 
                 # PROCESS
                 self.fog_drop[iot_index, fog_index] = 0
@@ -325,6 +331,9 @@ class Offload:
                         else:
                             self.process_delay[get_task['time'], iot_index] = self.max_delay
                             self.process_delay_unfinish_ind[get_task['time'], iot_index] = 1
+                            self.drop_trans_count = self.drop_trans_count + 1
+                            self.utils.drop_trans_task(get_task['priority'])
+                            self.utils.drop_task()
 
             # PROCESS
             if self.task_on_transmit_local[iot_index]['remain'] > 0:
