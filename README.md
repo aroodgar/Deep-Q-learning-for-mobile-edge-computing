@@ -13,7 +13,6 @@ The main code was forked from the following repository:
 
 https://github.com/mingt2019/Deep-Q-learning-for-mobile-edge-computing.
 
-I needed the results as part of my work on DRL-based solutions for task offloading in MEC systems which is the focus of my undergraduate Final project.
 I hope this code helps someone who also needs simulation codes for regenerating results in the aforementioned paper.
 If you see any problem in my code, I'd be happy to be notified about it.
 
