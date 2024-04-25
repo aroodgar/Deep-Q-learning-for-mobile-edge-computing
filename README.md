@@ -19,7 +19,7 @@ If you see any problem in my code, I'd be happy to be notified about it.
 **Note: The first part of this README file belongs to the main project which the link was mentioned earlier.**
 
 ## Extra abstraction for queueing algorithms
-I have added some abstraction for queueing algorithms which were necessary in order to test some things for my own work.
+I have added some abstraction for queueing algorithms for the sake of extensibilty.
 The structure of this abstraction can be found in the two following files:
 > - QueueHandler.py
 > - GeneralQueue.py
